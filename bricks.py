@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
 import hashlib
 import time
 import json
@@ -77,6 +77,10 @@ bricks = BricksCoin()
 
 @app.route('/')
 def home():
+    return render_template('index.html')
+
+@app.route('/api')
+def api():
     return jsonify({
         "coin": "BRICKS Coin",
         "total_supply": "21,000,000 BRICKS",
