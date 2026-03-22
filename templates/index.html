@@ -50,7 +50,7 @@ async function loadData() {
     try {
         const res = await fetch('/chain');
         const blocks = await res.json();
-        const statsRes = await fetch('/');
+        const statsRes = await fetch('/api');
         const stats = await statsRes.json();
         document.getElementById('blocks').textContent = stats.total_blocks;
         document.getElementById('circulating').textContent = stats.circulating;
