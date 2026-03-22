@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BRICKS Wallet</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f0f4ff; }
+        .lock-screen {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1a237e, #1565c0);
+            color: white;
+        }
+        .lock-screen h1 { font-size: 2em; margin-bottom: 10px; }
+        .lock-screen p { opacity: 0.8; margin-bottom: 30px; }
+        .pin-display {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .pin-dot {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid white;
+            background: transparent;
+        }
+        .pin-dot.filled { background: white; }
+        .pin-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .pin-btn {
+            width: 75px;
+            height: 75px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-size: 1.5em;
+            cursor: pointer;
+        }
+        .pin-btn:active { background: rgba(255,255,255,0.3); }
+        .error-msg { color: #ff6b6b; margin-top: 10px; font-size: 0.9em; }
+        .wallet-screen { display: none; min-height: 100vh; }
+        header {
+            background: linear-gradient(135deg, #1a237e, #1565c0);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        header h1 { font-size: 1.8em; }
+        .balance-card {
+            background: linear-gradient(135deg, #1565c0, #1e88e5);
+            color: white;
+            margin: 20px;
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .balance-card h2 { font-size: 0.9em; opacity: 0.8; }
+        .balance-card h1 { font-size: 2.5em; margin: 10px 0; }
+        .address-box {
+            background: rgba(255,255,255,0.2);
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            word-break: break-all;
+        }
+        .section { margin: 15px; }
+        .section h3 { color: #1565c0; margin-bottom: 10px; font-size: 1.1em; }
+        .input-group { margin-bottom: 12px; }
+        .input-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+            outline: none;
+        }
+        .input-group input:focus { border-color: #1565c0; }
+        .send-btn {
+            width: 100%;
+            background: #1565c0;
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            cursor: pointer;
+        }
+        .send-btn:active { background: #1a237e; }
+        .msg { text-align: center; padding: 10px; border-radius: 8px; margin-top: 10px; }
+        .msg.success { background: #e8f5e9; color: #2e7d32; }
+        .msg.error { background: #ffebee; color: #c62828; }
+        .logout-btn {
+            width: calc(100% - 30px);
+            margin: 0 15px 20px;
+            background: #ef5350;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+        }
+        .wallet-select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Lock Screen -->
+<div class="lock-screen" id="lockScreen">
+    <h1>💎 BRICKS Wallet</h1>
+    <p>Enter your PIN to access</p>
+    <div class="pin-display">
+        <div class="pin-dot" id="dot1"></div>
+        <div class="pin-dot" id="dot2"></div>
+        <div class="pin-dot" id="dot3"></div>
+        <div class="pin-dot" id="dot4"></div>
+    </div>
+    <div class="pin-pad">
+        <button class="pin-btn" onclick="addPin('1')">1</button>
+        <button class="pin-btn" onclick="addPin('2')">2</button>
+        <button class="pin-btn" onclick="addPin('3')">3</button>
+        <button class="pin-btn" onclick="addPin('4')">4</button>
+        <button class="pin-btn" onclick="addPin('5')">5</button>
+        <button class="pin-btn" onclick="addPin('6')">6</button>
+        <button class="pin-btn" onclick="addPin('7')">7</button>
+        <button class="pin-btn" onclick="addPin('8')">8</button>
+        <button class="pin-btn" onclick="addPin('9')">9</button>
+        <button class="pin-btn" onclick="clearPin()">C</button>
+        <button class="pin-btn" onclick="addPin('0')">0</button>
+        <button class="pin-btn" onclick="deletePin()">⌫</button>
+    </div>
+    <div class="error-msg" id="errorMsg"></div>
+</div>
+
+<!-- Wallet Screen -->
+<div class="wallet-screen" id="walletScreen">
+    <header>
+        <h1>💎 BRICKS Wallet</h1>
+    </header>
+
+    <div class="balance-card">
+        <h2>Current Balance</h2>
+        <h1 id="balance">- BRICKS</h1>
+        <div class="address-box" id="addressBox">Loading...</div>
+    </div>
+
+    <div class="section">
+        <h3>💸 BRICKS भेजो</h3>
+        <div class="input-group">
+            <select class="wallet-select" id="fromWallet">
+                <option>Loading...</option>
+            </select>
+        </div>
+        <div class="input-group">
+            <input type="text" id="toWallet" placeholder="किसको भेजना है? (Name)">
+        </div>
+        <div class="input-group">
+            <input type="number" id="amount" placeholder="कितने BRICKS?">
+        </div>
+        <button class="send-btn" onclick="sendBricks()">🚀 BRICKS भेजो</button>
+        <div id="sendMsg"></div>
+    </div>
+
+    <button class="logout-btn" onclick="logout()">🔒 Lock Wallet</button>
+</div>
+
+<script>
+const CORRECT_PIN = '1234';
+let currentPin = '';
+let currentWallet = '';
+
+function addPin(num) {
+    if (currentPin.length < 4) {
+        currentPin += num;
+        updateDots();
+        if (currentPin.length === 4) checkPin();
+    }
+}
+
+function deletePin() {
+    currentPin = currentPin.slice(0, -1);
+    updateDots();
+}
+
+function clearPin() {
+    currentPin = '';
+    updateDots();
+}
+
+function updateDots() {
+    for (let i = 1; i <= 4; i++) {
+        const dot = document.getElementById('dot' + i);
+        dot.classList.toggle('filled', i <= currentPin.length);
+    }
+}
+
+function checkPin() {
+    if (currentPin === CORRECT_PIN) {
+        document.getElementById('lockScreen').style.display = 'none';
+        document.getElementById('walletScreen').style.display = 'block';
+        loadWallets();
+    } else {
+        document.getElementById('errorMsg').textContent = '❌ Wrong PIN! Try again';
+        currentPin = '';
+        updateDots();
+        setTimeout(() => {
+            document.getElementById('errorMsg').textContent = '';
+        }, 2000);
+    }
+}
+
+function logout() {
+    currentPin = '';
+    updateDots();
+    document.getElementById('lockScreen').style.display = 'flex';
+    document.getElementById('walletScreen').style.display = 'none';
+}
+
+async function loadWallets() {
+    try {
+        const res = await fetch('/wallets');
+        const wallets = await res.json();
+        const select = document.getElementById('fromWallet');
+        select.innerHTML = '';
+        for (const [name, data] of Object.entries(wallets)) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = `${name} — ${data.balance} BRICKS`;
+            select.appendChild(option);
+        }
+        updateBalance();
+        select.addEventListener('change', updateBalance);
+    } catch(e) {
+        console.log('Error loading wallets');
+    }
+}
+
+async function updateBalance() {
+    const name = document.getElementById('fromWallet').value;
+    currentWallet = name;
+    try {
+        const res = await fetch('/wallets');
+        const wallets = await res.json();
+        if (wallets[name]) {
+            document.getElementById('balance').textContent = wallets[name].balance + ' BRICKS';
+            document.getElementById('addressBox').textContent = '📍 ' + wallets[name].address;
+        }
+    } catch(e) {}
+}
+
+async function sendBricks() {
+    const from = document.getElementById('fromWallet').value;
+    const to = document.getElementById('toWallet').value;
+    const amount = document.getElementById('amount').value;
+    const msgDiv = document.getElementById('sendMsg');
+
+    if (!to || !amount) {
+        msgDiv.className = 'msg error';
+        msgDiv.textContent = '❌ सब भरो!';
+        return;
+    }
+
+    try {
+        const res = await fetch(`/send/${from}/${to}/${amount}`);
+        const data = await res.json();
+        if (data.status.includes('Done')) {
+            msgDiv.className = 'msg success';
+            msgDiv.textContent = '✅ ' + amount + ' BRICKS भेज दिए!';
+            loadWallets();
+        } else {
+            msgDiv.className = 'msg error';
+            msgDiv.textContent = '❌ Transaction Failed!';
+        }
+    } catch(e) {
+        msgDiv.className = 'msg error';
+        msgDiv.textContent = '❌ Error!';
+    }
+
+    setTimeout(() => { msgDiv.textContent = ''; }, 3000);
+}
+</script>
+</body>
+</html>
