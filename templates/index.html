@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BRICKS Coin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f0f4ff; color: #1a1a2e; }
+        header { background: linear-gradient(135deg, #1a237e, #1565c0); color: white; padding: 20px; text-align: center; }
+        header h1 { font-size: 2.5em; }
+        header p { font-size: 1.1em; opacity: 0.9; margin-top: 5px; }
+        .stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; padding: 20px; background: white; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .stat-card { background: linear-gradient(135deg, #1565c0, #1e88e5); color: white; padding: 15px 25px; border-radius: 10px; text-align: center; min-width: 150px; }
+        .stat-card h3 { font-size: 1.8em; }
+        .stat-card p { font-size: 0.85em; opacity: 0.9; }
+        .section { max-width: 900px; margin: 20px auto; padding: 0 15px; }
+        .section h2 { color: #1565c0; font-size: 1.5em; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 3px solid #1565c0; }
+        .block-card { background: white; border-radius: 12px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 5px solid #1565c0; }
+        .block-number { background: #1565c0; color: white; padding: 4px 12px; border-radius: 20px; font-weight: bold; }
+        .block-time { color: #888; font-size: 0.85em; }
+        .hash { background: #f0f4ff; padding: 6px 10px; border-radius: 6px; font-family: monospace; font-size: 0.8em; color: #555; word-break: break-all; margin-top: 8px; }
+        footer { background: #1a237e; color: white; text-align: center; padding: 15px; margin-top: 30px; }
+        .live-badge { display: inline-block; background: #4caf50; color: white; padding: 3px 10px; border-radius: 20px; font-size: 0.8em; margin-left: 10px; }
+        .refresh-btn { background: #1565c0; color: white; border: none; padding: 10px 25px; border-radius: 8px; cursor: pointer; font-size: 1em; margin: 10px 0; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>BRICKS Coin <span class="live-badge">LIVE</span></h1>
+    <p>Decentralized Cryptocurrency Blockchain</p>
+</header>
+<div class="stats">
+    <div class="stat-card"><h3 id="blocks">-</h3><p>Total Blocks</p></div>
+    <div class="stat-card"><h3>21M</h3><p>Total Supply</p></div>
+    <div class="stat-card"><h3 id="circulating">-</h3><p>Circulating</p></div>
+    <div class="stat-card"><h3 id="wallets">-</h3><p>Total Wallets</p></div>
+</div>
+<div class="section">
+    <h2>Blockchain Blocks</h2>
+    <button class="refresh-btn" onclick="loadData()">Refresh</button>
+    <div id="chain-container">Loading...</div>
+</div>
+<footer>
+    <p>BRICKS Coin — Blockchain Technology</p>
+    <p style="opacity:0.7; font-size:0.85em; margin-top:5px;">Total Supply: 21,000,000 BRICKS</p>
+</footer>
+<script>
+async function loadData() {
+    try {
+        const res = await fetch('/chain');
+        const blocks = await res.json();
+        const statsRes = await fetch('/');
+        const stats = await statsRes.json();
+        document.getElementById('blocks').textContent = stats.total_blocks;
+        document.getElementById('circulating').textContent = stats.circulating;
+        document.getElementById('wallets').textContent = stats.total_wallets;
+        let html = '';
+        blocks.reverse().forEach(block => {
+            html += `<div class="block-card">
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+                    <span class="block-number">Block #${block.index}</span>
+                    <span class="block-time">${block.time}</span>
+                </div>
+                <div><b>Data:</b> ${block.data}</div>
+                <div class="hash">Hash: ${block.hash}</div>
+            </div>`;
+        });
+        document.getElementById('chain-container').innerHTML = html;
+    } catch(e) {
+        document.getElementById('chain-container').innerHTML = '<p>Loading...</p>';
+    }
+}
+loadData();
+setInterval(loadData, 10000);
+</script>
+</body>
+</html>
