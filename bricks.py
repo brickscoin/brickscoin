@@ -89,7 +89,9 @@ def api():
         "total_wallets": len(bricks.wallets),
         "status": "BRICKS Coin is LIVE!"
     })
-
+@app.route('/wallet')
+def wallet():
+    return render_template('wallet.html')
 @app.route('/wallets')
 def wallets():
     result = {}
