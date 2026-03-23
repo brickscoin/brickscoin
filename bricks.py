@@ -1,10 +1,29 @@
-from flask import Flask, jsonify, render_template, request, abort
+from flask_sqlalchemy import SQLAlchemy
+import os
+from flask import Flask, jsonify, render_template, request
 import hashlib
 import time
 import json
 from functools import wraps
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bricks.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+
+# ===== DATABASE =====
+class TransactionDB(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    sender = db.Column(db.String(50))
+    receiver = db.Column(db.String(50))
+    amount = db.Column(db.Integer)
+    timestamp = db.Column(db.String(50))
+
+class WalletDB(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True)
+    address = db.Column(db.String(50))
+    balance = db.Column(db.Integer, default=0)
 
 # ===== RATE LIMITING =====
 request_counts = {}
@@ -69,26 +88,47 @@ class BricksCoin:
         self.circulating_supply = 0
         genesis = Block(0, "BRICKS Genesis Block", "0")
         self.chain.append(genesis)
-        self.create_wallet("Rahul", 1000)
-        self.create_wallet("Priya", 800)
-        self.create_wallet("Amit", 600)
+        self._load_wallets()
+
+    def _load_wallets(self):
+        with app.app_context():
+            saved = WalletDB.query.all()
+            if not saved:
+                self.create_wallet("Rahul", 1000)
+                self.create_wallet("Priya", 800)
+                self.create_wallet("Amit", 600)
+            else:
+                for w in saved:
+                    wallet = Wallet(w.name)
+                    wallet.balance = w.balance
+                    self.wallets[w.name] = wallet
+                    self.circulating_supply += w.balance
 
     def create_wallet(self, name, balance=0):
         if not name or len(name) > 50:
             return None
-        name = name.strip()
         w = Wallet(name)
         w.balance = balance
         self.wallets[name] = w
         self.circulating_supply += balance
+        with app.app_context():
+            existing = WalletDB.query.filter_by(name=name).first()
+            if not existing:
+                db_wallet = WalletDB(name=name, address=w.address, balance=balance)
+                db.session.add(db_wallet)
+                db.session.commit()
         return w
 
+    def save_wallet(self, name):
+        with app.app_context():
+            w = WalletDB.query.filter_by(name=name).first()
+            if w:
+                w.balance = self.wallets[name].balance
+                db.session.commit()
+
     def send_bricks(self, sender, receiver, amount):
-        # Security Checks
         if not sender or not receiver or not amount:
             return False, "सब fields भरो!"
-        if len(sender) > 50 or len(receiver) > 50:
-            return False, "Invalid name!"
         if sender not in self.wallets:
             return False, f"{sender} की Wallet नहीं मिली!"
         if receiver not in self.wallets:
@@ -102,11 +142,11 @@ class BricksCoin:
         if amount > 10000:
             return False, "एक बार में 10000 से ज़्यादा नहीं!"
         if self.wallets[sender].balance < amount:
-            return False, f"Balance कम है! सिर्फ {self.wallets[sender].balance} BRICKS हैं!"
+            return False, f"Balance कम है!"
 
-        # Transaction
         self.wallets[sender].balance -= amount
         self.wallets[receiver].balance += amount
+
         tx = {
             "from": sender,
             "to": receiver,
@@ -114,10 +154,24 @@ class BricksCoin:
             "time": time.strftime("%Y-%m-%d %H:%M:%S")
         }
         self.transaction_history.append(tx)
+
+        with app.app_context():
+            db_tx = TransactionDB(
+                sender=sender,
+                receiver=receiver,
+                amount=amount,
+                timestamp=tx["time"]
+            )
+            db.session.add(db_tx)
+            db.session.commit()
+
         block = Block(len(self.chain), str(tx), self.chain[-1].hash)
         self.chain.append(block)
         self.wallets[sender].balance += self.mining_reward
         self.circulating_supply += self.mining_reward
+
+        self.save_wallet(sender)
+        self.save_wallet(receiver)
         return True, "Transaction हो गई!"
 
     def is_valid(self):
@@ -126,7 +180,6 @@ class BricksCoin:
                 return False
         return True
 
-bricks = BricksCoin()
 # ===== PRICE SYSTEM =====
 import random
 
@@ -150,7 +203,12 @@ class PriceSystem:
     def get_market_cap(self, circulating):
         return round(self.current_price * circulating, 4)
 
+with app.app_context():
+    db.create_all()
+
+bricks = BricksCoin()
 price_system = PriceSystem()
+
 # ===== ROUTES =====
 @app.route('/')
 @rate_limit
