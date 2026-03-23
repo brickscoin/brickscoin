@@ -73,7 +73,7 @@ class Block:
     def mine_block(self):
         while True:
             hash_val = self.calculate_hash()
-            if hash_val.startswith("0000"):
+            if hash_val.startswith("000"):
                 return hash_val
             self.nonce += 1
 
