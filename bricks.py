@@ -5,13 +5,13 @@ import hashlib
 import time
 import json
 from functools import wraps
+import random
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bricks.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# ===== DATABASE =====
 class TransactionDB(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender = db.Column(db.String(50))
@@ -25,7 +25,6 @@ class WalletDB(db.Model):
     address = db.Column(db.String(50))
     balance = db.Column(db.Integer, default=0)
 
-# ===== RATE LIMITING =====
 request_counts = {}
 RATE_LIMIT = 30
 
@@ -43,14 +42,15 @@ def rate_limit(f):
         return f(*args, **kwargs)
     return decorated
 
-# ===== WALLET =====
 class Wallet:
     def __init__(self, name):
         self.name = name
         self.address = hashlib.sha256(name.encode()).hexdigest()[:20]
         self.balance = 0
+        self.private_key = hashlib.sha256(
+            (name + "BRICKS_SECRET_2026").encode()
+        ).hexdigest()[:16]
 
-# ===== BLOCK =====
 class Block:
     def __init__(self, index, data, previous_hash):
         self.index = index
@@ -77,7 +77,6 @@ class Block:
                 return hash_val
             self.nonce += 1
 
-# ===== BLOCKCHAIN =====
 class BricksCoin:
     def __init__(self):
         self.chain = []
@@ -126,13 +125,15 @@ class BricksCoin:
                 w.balance = self.wallets[name].balance
                 db.session.commit()
 
-    def send_bricks(self, sender, receiver, amount):
+    def send_bricks(self, sender, receiver, amount, private_key=""):
         if not sender or not receiver or not amount:
             return False, "सब fields भरो!"
         if sender not in self.wallets:
             return False, f"{sender} की Wallet नहीं मिली!"
         if receiver not in self.wallets:
             return False, f"{receiver} की Wallet नहीं मिली!"
+        if self.wallets[sender].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
         try:
             amount = int(amount)
         except:
@@ -142,7 +143,7 @@ class BricksCoin:
         if amount > 10000:
             return False, "एक बार में 10000 से ज़्यादा नहीं!"
         if self.wallets[sender].balance < amount:
-            return False, f"Balance कम है!"
+            return False, "Balance कम है!"
 
         self.wallets[sender].balance -= amount
         self.wallets[receiver].balance += amount
@@ -180,9 +181,6 @@ class BricksCoin:
                 return False
         return True
 
-# ===== PRICE SYSTEM =====
-import random
-
 class PriceSystem:
     def __init__(self):
         self.current_price = 0.001
@@ -209,7 +207,6 @@ with app.app_context():
 bricks = BricksCoin()
 price_system = PriceSystem()
 
-# ===== ROUTES =====
 @app.route('/')
 @rate_limit
 def home():
@@ -244,7 +241,8 @@ def wallets():
     for name, w in bricks.wallets.items():
         result[name] = {
             "address": w.address,
-            "balance": w.balance
+            "balance": w.balance,
+            "private_key": w.private_key
         }
     return jsonify(result)
 
@@ -261,10 +259,10 @@ def chain():
         })
     return jsonify(blocks)
 
-@app.route('/send/<sender>/<receiver>/<amount>')
+@app.route('/send/<sender>/<receiver>/<amount>/<private_key>')
 @rate_limit
-def send(sender, receiver, amount):
-    success, msg = bricks.send_bricks(sender, receiver, amount)
+def send(sender, receiver, amount, private_key):
+    success, msg = bricks.send_bricks(sender, receiver, amount, private_key)
     if success:
         return jsonify({
             "status": "Transaction Done!",
