@@ -73,7 +73,7 @@ class Block:
     def mine_block(self):
         while True:
             hash_val = self.calculate_hash()
-            if hash_val.startswith("00"):
+            if hash_val.startswith("0000"):
                 return hash_val
             self.nonce += 1
 
@@ -87,9 +87,7 @@ class BricksCoin:
         self.circulating_supply = 0
         genesis = Block(0, "BRICKS Genesis Block", "0")
         self.chain.append(genesis)
-        self._load_wallets()
-
-    def _load_wallets(self):
+        self._loadad_wallets(self):
         with app.app_context():
             saved = WalletDB.query.all()
             if not saved:
