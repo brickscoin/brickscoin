@@ -127,7 +127,30 @@ class BricksCoin:
         return True
 
 bricks = BricksCoin()
+# ===== PRICE SYSTEM =====
+import random
 
+class PriceSystem:
+    def __init__(self):
+        self.current_price = 0.001
+        self.price_history = [0.001]
+
+    def update_price(self, buy_pressure=True):
+        change = random.uniform(0.00001, 0.0001)
+        if buy_pressure:
+            self.current_price += change
+        else:
+            self.current_price -= change
+        if self.current_price < 0.0001:
+            self.current_price = 0.0001
+        self.price_history.append(round(self.current_price, 6))
+        if len(self.price_history) > 20:
+            self.price_history.pop(0)
+
+    def get_market_cap(self, circulating):
+        return round(self.current_price * circulating, 4)
+
+price_system = PriceSystem()
 # ===== ROUTES =====
 @app.route('/')
 @rate_limit
@@ -142,6 +165,7 @@ def wallet():
 @app.route('/api')
 @rate_limit
 def api():
+    price_system.update_price()
     return jsonify({
         "coin": "BRICKS Coin",
         "total_supply": "21,000,000 BRICKS",
@@ -149,6 +173,9 @@ def api():
         "total_blocks": len(bricks.chain),
         "total_wallets": len(bricks.wallets),
         "blockchain_valid": bricks.is_valid(),
+        "price_usd": round(price_system.current_price, 6),
+        "market_cap_usd": price_system.get_market_cap(bricks.circulating_supply),
+        "price_history": price_system.price_history,
         "status": "BRICKS Coin is LIVE!"
     })
 
