@@ -1,0 +1,17 @@
+{
+  "name": "BRICKS Cryptocurrency",
+  "short_name": "BRICKS",
+  "description": "BRICKS Coin - Decentralized Cryptocurrency",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a237e",
+  "theme_color": "#1565c0",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/static/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
