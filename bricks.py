@@ -87,7 +87,7 @@ class BricksCoin:
         self.circulating_supply = 0
         genesis = Block(0, "BRICKS Genesis Block", "0")
         self.chain.append(genesis)
-        self._loadad_wallets(self):
+        self._load_wallets()
         with app.app_context():
             saved = WalletDB.query.all()
             if not saved:
