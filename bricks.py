@@ -12,6 +12,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bricks.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
+# ===== DATABASE =====
 class TransactionDB(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender = db.Column(db.String(50))
@@ -25,6 +26,16 @@ class WalletDB(db.Model):
     address = db.Column(db.String(50))
     balance = db.Column(db.Integer, default=0)
 
+class SmartContractDB(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    creator = db.Column(db.String(50))
+    receiver = db.Column(db.String(50))
+    amount = db.Column(db.Integer)
+    condition = db.Column(db.String(200))
+    status = db.Column(db.String(20), default="pending")
+    timestamp = db.Column(db.String(50))
+
+# ===== RATE LIMITING =====
 request_counts = {}
 RATE_LIMIT = 30
 
@@ -42,6 +53,7 @@ def rate_limit(f):
         return f(*args, **kwargs)
     return decorated
 
+# ===== WALLET =====
 class Wallet:
     def __init__(self, name):
         self.name = name
@@ -51,6 +63,7 @@ class Wallet:
             (name + "BRICKS_SECRET_2026").encode()
         ).hexdigest()[:16]
 
+# ===== BLOCK =====
 class Block:
     def __init__(self, index, data, previous_hash):
         self.index = index
@@ -77,17 +90,34 @@ class Block:
                 return hash_val
             self.nonce += 1
 
+# ===== SMART CONTRACT =====
+class SmartContract:
+    def __init__(self, creator, receiver, amount, condition):
+        self.creator = creator
+        self.receiver = receiver
+        self.amount = amount
+        self.condition = condition
+        self.status = "pending"
+        self.timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.contract_id = hashlib.sha256(
+            (creator + receiver + str(amount) + self.timestamp).encode()
+        ).hexdigest()[:10]
+
+# ===== BLOCKCHAIN =====
 class BricksCoin:
     def __init__(self):
         self.chain = []
         self.wallets = {}
         self.transaction_history = []
+        self.contracts = []
         self.mining_reward = 10
         self.total_supply = 21000000
         self.circulating_supply = 0
         genesis = Block(0, "BRICKS Genesis Block", "0")
         self.chain.append(genesis)
         self._load_wallets()
+
+    def _load_wallets(self):
         with app.app_context():
             saved = WalletDB.query.all()
             if not saved:
@@ -173,12 +203,73 @@ class BricksCoin:
         self.save_wallet(receiver)
         return True, "Transaction हो गई!"
 
+    def create_contract(self, creator, receiver, amount, condition, private_key):
+        if creator not in self.wallets:
+            return False, "Creator Wallet नहीं मिली!"
+        if receiver not in self.wallets:
+            return False, "Receiver Wallet नहीं मिली!"
+        if self.wallets[creator].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
+        try:
+            amount = int(amount)
+        except:
+            return False, "Amount सही नहीं है!"
+        if self.wallets[creator].balance < amount:
+            return False, "Balance कम है!"
+
+        contract = SmartContract(creator, receiver, amount, condition)
+        self.contracts.append(contract)
+
+        self.wallets[creator].balance -= amount
+        self.save_wallet(creator)
+
+        with app.app_context():
+            db_contract = SmartContractDB(
+                creator=creator,
+                receiver=receiver,
+                amount=amount,
+                condition=condition,
+                status="pending",
+                timestamp=contract.timestamp
+            )
+            db.session.add(db_contract)
+            db.session.commit()
+
+        return True, f"✅ Contract बन गया! ID: {contract.contract_id}"
+
+    def execute_contract(self, contract_id, private_key):
+        for contract in self.contracts:
+            if contract.contract_id == contract_id:
+                if contract.status == "executed":
+                    return False, "Contract already executed!"
+                if contract.creator not in self.wallets:
+                    return False, "Creator नहीं मिला!"
+                if self.wallets[contract.creator].private_key != private_key:
+                    return False, "❌ Wrong Private Key!"
+
+                self.wallets[contract.receiver].balance += contract.amount
+                self.save_wallet(contract.receiver)
+                contract.status = "executed"
+
+                with app.app_context():
+                    db_c = SmartContractDB.query.filter_by(
+                        creator=contract.creator,
+                        timestamp=contract.timestamp
+                    ).first()
+                    if db_c:
+                        db_c.status = "executed"
+                        db.session.commit()
+
+                return True, f"✅ Contract Execute हो गया! {contract.amount} BRICKS भेजे!"
+        return False, "Contract नहीं मिला!"
+
     def is_valid(self):
         for i in range(1, len(self.chain)):
             if self.chain[i].previous_hash != self.chain[i-1].hash:
                 return False
         return True
 
+# ===== PRICE SYSTEM =====
 class PriceSystem:
     def __init__(self):
         self.current_price = 0.001
@@ -205,6 +296,7 @@ with app.app_context():
 bricks = BricksCoin()
 price_system = PriceSystem()
 
+# ===== ROUTES =====
 @app.route('/')
 @rate_limit
 def home():
@@ -225,6 +317,7 @@ def api():
         "circulating": bricks.circulating_supply,
         "total_blocks": len(bricks.chain),
         "total_wallets": len(bricks.wallets),
+        "total_contracts": len(bricks.contracts),
         "blockchain_valid": bricks.is_valid(),
         "price_usd": round(price_system.current_price, 6),
         "market_cap_usd": price_system.get_market_cap(bricks.circulating_supply),
@@ -270,6 +363,38 @@ def send(sender, receiver, amount, private_key):
             "message": msg
         })
     return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/contract/create/<creator>/<receiver>/<amount>/<condition>/<private_key>')
+@rate_limit
+def create_contract(creator, receiver, amount, condition, private_key):
+    success, msg = bricks.create_contract(creator, receiver, amount, condition, private_key)
+    if success:
+        return jsonify({"status": "Contract बन गया!", "message": msg})
+    return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/contract/execute/<contract_id>/<private_key>')
+@rate_limit
+def execute_contract(contract_id, private_key):
+    success, msg = bricks.execute_contract(contract_id, private_key)
+    if success:
+        return jsonify({"status": "Contract Execute हो गया!", "message": msg})
+    return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/contracts')
+@rate_limit
+def contracts():
+    result = []
+    for c in bricks.contracts:
+        result.append({
+            "id": c.contract_id,
+            "creator": c.creator,
+            "receiver": c.receiver,
+            "amount": c.amount,
+            "condition": c.condition,
+            "status": c.status,
+            "time": c.timestamp
+        })
+    return jsonify(result)
 
 @app.errorhandler(404)
 def not_found(e):
