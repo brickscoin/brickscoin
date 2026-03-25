@@ -35,6 +35,16 @@ class SmartContractDB(db.Model):
     status = db.Column(db.String(20), default="pending")
     timestamp = db.Column(db.String(50))
 
+class NFTDB(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nft_id = db.Column(db.String(20), unique=True)
+    name = db.Column(db.String(100))
+    description = db.Column(db.String(500))
+    creator = db.Column(db.String(50))
+    owner = db.Column(db.String(50))
+    price = db.Column(db.Integer)
+    timestamp = db.Column(db.String(50))
+
 # ===== RATE LIMITING =====
 request_counts = {}
 RATE_LIMIT = 30
@@ -62,6 +72,7 @@ class Wallet:
         self.private_key = hashlib.sha256(
             (name + "BRICKS_SECRET_2026").encode()
         ).hexdigest()[:16]
+        self.nfts = []
 
 # ===== BLOCK =====
 class Block:
@@ -90,6 +101,19 @@ class Block:
                 return hash_val
             self.nonce += 1
 
+# ===== NFT =====
+class NFT:
+    def __init__(self, name, description, creator, price):
+        self.name = name
+        self.description = description
+        self.creator = creator
+        self.owner = creator
+        self.price = price
+        self.timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.nft_id = hashlib.sha256(
+            (name + creator + self.timestamp).encode()
+        ).hexdigest()[:10]
+
 # ===== SMART CONTRACT =====
 class SmartContract:
     def __init__(self, creator, receiver, amount, condition):
@@ -110,12 +134,14 @@ class BricksCoin:
         self.wallets = {}
         self.transaction_history = []
         self.contracts = []
+        self.nfts = []
         self.mining_reward = 10
         self.total_supply = 21000000
         self.circulating_supply = 0
         genesis = Block(0, "BRICKS Genesis Block", "0")
         self.chain.append(genesis)
         self._load_wallets()
+        self._load_nfts()
 
     def _load_wallets(self):
         with app.app_context():
@@ -130,6 +156,18 @@ class BricksCoin:
                     wallet.balance = w.balance
                     self.wallets[w.name] = wallet
                     self.circulating_supply += w.balance
+
+    def _load_nfts(self):
+        with app.app_context():
+            saved = NFTDB.query.all()
+            for n in saved:
+                nft = NFT(n.name, n.description, n.creator, n.price)
+                nft.nft_id = n.nft_id
+                nft.owner = n.owner
+                nft.timestamp = n.timestamp
+                self.nfts.append(nft)
+                if n.owner in self.wallets:
+                    self.wallets[n.owner].nfts.append(nft.nft_id)
 
     def create_wallet(self, name, balance=0):
         if not name or len(name) > 50:
@@ -203,6 +241,72 @@ class BricksCoin:
         self.save_wallet(receiver)
         return True, "Transaction हो गई!"
 
+    def create_nft(self, name, description, creator, price, private_key):
+        if creator not in self.wallets:
+            return False, "Wallet नहीं मिली!"
+        if self.wallets[creator].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
+        if not name or len(name) > 100:
+            return False, "NFT नाम सही नहीं!"
+
+        nft = NFT(name, description, creator, price)
+        self.nfts.append(nft)
+        self.wallets[creator].nfts.append(nft.nft_id)
+
+        with app.app_context():
+            db_nft = NFTDB(
+                nft_id=nft.nft_id,
+                name=nft.name,
+                description=nft.description,
+                creator=nft.creator,
+                owner=nft.owner,
+                price=nft.price,
+                timestamp=nft.timestamp
+            )
+            db.session.add(db_nft)
+            db.session.commit()
+
+        return True, f"✅ NFT बन गया! ID: {nft.nft_id}"
+
+    def buy_nft(self, nft_id, buyer, private_key):
+        if buyer not in self.wallets:
+            return False, "Buyer Wallet नहीं मिली!"
+        if self.wallets[buyer].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
+
+        nft = None
+        for n in self.nfts:
+            if n.nft_id == nft_id:
+                nft = n
+                break
+
+        if not nft:
+            return False, "NFT नहीं मिली!"
+        if nft.owner == buyer:
+            return False, "यह NFT पहले से तुम्हारी है!"
+        if self.wallets[buyer].balance < nft.price:
+            return False, "Balance कम है!"
+
+        self.wallets[buyer].balance -= nft.price
+        self.wallets[nft.owner].balance += nft.price
+
+        old_owner = nft.owner
+        nft.owner = buyer
+
+        if nft_id in self.wallets[old_owner].nfts:
+            self.wallets[old_owner].nfts.remove(nft_id)
+        self.wallets[buyer].nfts.append(nft_id)
+
+        with app.app_context():
+            db_nft = NFTDB.query.filter_by(nft_id=nft_id).first()
+            if db_nft:
+                db_nft.owner = buyer
+                db.session.commit()
+
+        self.save_wallet(buyer)
+        self.save_wallet(old_owner)
+        return True, f"✅ NFT खरीद ली! {nft.price} BRICKS दिए!"
+
     def create_contract(self, creator, receiver, amount, condition, private_key):
         if creator not in self.wallets:
             return False, "Creator Wallet नहीं मिली!"
@@ -219,7 +323,6 @@ class BricksCoin:
 
         contract = SmartContract(creator, receiver, amount, condition)
         self.contracts.append(contract)
-
         self.wallets[creator].balance -= amount
         self.save_wallet(creator)
 
@@ -242,8 +345,6 @@ class BricksCoin:
             if contract.contract_id == contract_id:
                 if contract.status == "executed":
                     return False, "Contract already executed!"
-                if contract.creator not in self.wallets:
-                    return False, "Creator नहीं मिला!"
                 if self.wallets[contract.creator].private_key != private_key:
                     return False, "❌ Wrong Private Key!"
 
@@ -260,7 +361,7 @@ class BricksCoin:
                         db_c.status = "executed"
                         db.session.commit()
 
-                return True, f"✅ Contract Execute हो गया! {contract.amount} BRICKS भेजे!"
+                return True, f"✅ Contract Execute हो गया!"
         return False, "Contract नहीं मिला!"
 
     def is_valid(self):
@@ -318,6 +419,7 @@ def api():
         "total_blocks": len(bricks.chain),
         "total_wallets": len(bricks.wallets),
         "total_contracts": len(bricks.contracts),
+        "total_nfts": len(bricks.nfts),
         "blockchain_valid": bricks.is_valid(),
         "price_usd": round(price_system.current_price, 6),
         "market_cap_usd": price_system.get_market_cap(bricks.circulating_supply),
@@ -333,7 +435,8 @@ def wallets():
         result[name] = {
             "address": w.address,
             "balance": w.balance,
-            "private_key": w.private_key
+            "private_key": w.private_key,
+            "nfts": w.nfts
         }
     return jsonify(result)
 
@@ -363,6 +466,38 @@ def send(sender, receiver, amount, private_key):
             "message": msg
         })
     return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/nft/create/<creator>/<name>/<description>/<int:price>/<private_key>')
+@rate_limit
+def create_nft(creator, name, description, price, private_key):
+    success, msg = bricks.create_nft(name, description, creator, price, private_key)
+    if success:
+        return jsonify({"status": "NFT बन गया!", "message": msg})
+    return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/nft/buy/<nft_id>/<buyer>/<private_key>')
+@rate_limit
+def buy_nft(nft_id, buyer, private_key):
+    success, msg = bricks.buy_nft(nft_id, buyer, private_key)
+    if success:
+        return jsonify({"status": "NFT खरीद ली!", "message": msg})
+    return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/nfts')
+@rate_limit
+def nfts():
+    result = []
+    for n in bricks.nfts:
+        result.append({
+            "id": n.nft_id,
+            "name": n.name,
+            "description": n.description,
+            "creator": n.creator,
+            "owner": n.owner,
+            "price": n.price,
+            "time": n.timestamp
+        })
+    return jsonify(result)
 
 @app.route('/contract/create/<creator>/<receiver>/<amount>/<condition>/<private_key>')
 @rate_limit
