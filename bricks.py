@@ -45,6 +45,17 @@ class NFTDB(db.Model):
     price = db.Column(db.Integer)
     timestamp = db.Column(db.String(50))
 
+class MarketplaceDB(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    item_id = db.Column(db.String(20), unique=True)
+    name = db.Column(db.String(100))
+    description = db.Column(db.String(500))
+    seller = db.Column(db.String(50))
+    buyer = db.Column(db.String(50), nullable=True)
+    price = db.Column(db.Integer)
+    status = db.Column(db.String(20), default="available")
+    timestamp = db.Column(db.String(50))
+
 # ===== RATE LIMITING =====
 request_counts = {}
 RATE_LIMIT = 30
@@ -114,6 +125,20 @@ class NFT:
             (name + creator + self.timestamp).encode()
         ).hexdigest()[:10]
 
+# ===== MARKETPLACE ITEM =====
+class MarketItem:
+    def __init__(self, name, description, seller, price):
+        self.name = name
+        self.description = description
+        self.seller = seller
+        self.buyer = None
+        self.price = price
+        self.status = "available"
+        self.timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.item_id = hashlib.sha256(
+            (name + seller + self.timestamp).encode()
+        ).hexdigest()[:10]
+
 # ===== SMART CONTRACT =====
 class SmartContract:
     def __init__(self, creator, receiver, amount, condition):
@@ -135,6 +160,7 @@ class BricksCoin:
         self.transaction_history = []
         self.contracts = []
         self.nfts = []
+        self.marketplace = []
         self.mining_reward = 10
         self.total_supply = 21000000
         self.circulating_supply = 0
@@ -142,6 +168,7 @@ class BricksCoin:
         self.chain.append(genesis)
         self._load_wallets()
         self._load_nfts()
+        self._load_marketplace()
 
     def _load_wallets(self):
         with app.app_context():
@@ -168,6 +195,17 @@ class BricksCoin:
                 self.nfts.append(nft)
                 if n.owner in self.wallets:
                     self.wallets[n.owner].nfts.append(nft.nft_id)
+
+    def _load_marketplace(self):
+        with app.app_context():
+            saved = MarketplaceDB.query.all()
+            for m in saved:
+                item = MarketItem(m.name, m.description, m.seller, m.price)
+                item.item_id = m.item_id
+                item.buyer = m.buyer
+                item.status = m.status
+                item.timestamp = m.timestamp
+                self.marketplace.append(item)
 
     def create_wallet(self, name, balance=0):
         if not name or len(name) > 50:
@@ -240,6 +278,76 @@ class BricksCoin:
         self.save_wallet(sender)
         self.save_wallet(receiver)
         return True, "Transaction हो गई!"
+
+    def list_item(self, seller, name, description, price, private_key):
+        if seller not in self.wallets:
+            return False, "Wallet नहीं मिली!"
+        if self.wallets[seller].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
+        if not name or len(name) > 100:
+            return False, "Item नाम सही नहीं!"
+        try:
+            price = int(price)
+        except:
+            return False, "Price सही नहीं है!"
+        if price <= 0:
+            return False, "Price 0 से ज़्यादा होनी चाहिए!"
+
+        item = MarketItem(name, description, seller, price)
+        self.marketplace.append(item)
+
+        with app.app_context():
+            db_item = MarketplaceDB(
+                item_id=item.item_id,
+                name=item.name,
+                description=item.description,
+                seller=item.seller,
+                price=item.price,
+                status="available",
+                timestamp=item.timestamp
+            )
+            db.session.add(db_item)
+            db.session.commit()
+
+        return True, f"✅ Item List हो गया! ID: {item.item_id}"
+
+    def buy_item(self, item_id, buyer, private_key):
+        if buyer not in self.wallets:
+            return False, "Buyer Wallet नहीं मिली!"
+        if self.wallets[buyer].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
+
+        item = None
+        for i in self.marketplace:
+            if i.item_id == item_id:
+                item = i
+                break
+
+        if not item:
+            return False, "Item नहीं मिली!"
+        if item.status == "sold":
+            return False, "Item पहले ही बिक गई!"
+        if item.seller == buyer:
+            return False, "अपनी Item नहीं खरीद सकते!"
+        if self.wallets[buyer].balance < item.price:
+            return False, "Balance कम है!"
+
+        self.wallets[buyer].balance -= item.price
+        self.wallets[item.seller].balance += item.price
+
+        item.buyer = buyer
+        item.status = "sold"
+
+        with app.app_context():
+            db_item = MarketplaceDB.query.filter_by(item_id=item_id).first()
+            if db_item:
+                db_item.buyer = buyer
+                db_item.status = "sold"
+                db.session.commit()
+
+        self.save_wallet(buyer)
+        self.save_wallet(item.seller)
+        return True, f"✅ Item खरीद ली! {item.price} BRICKS दिए!"
 
     def create_nft(self, name, description, creator, price, private_key):
         if creator not in self.wallets:
@@ -420,6 +528,7 @@ def api():
         "total_wallets": len(bricks.wallets),
         "total_contracts": len(bricks.contracts),
         "total_nfts": len(bricks.nfts),
+        "total_market_items": len(bricks.marketplace),
         "blockchain_valid": bricks.is_valid(),
         "price_usd": round(price_system.current_price, 6),
         "market_cap_usd": price_system.get_market_cap(bricks.circulating_supply),
@@ -466,6 +575,39 @@ def send(sender, receiver, amount, private_key):
             "message": msg
         })
     return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/market/list/<seller>/<name>/<description>/<price>/<private_key>')
+@rate_limit
+def list_item(seller, name, description, price, private_key):
+    success, msg = bricks.list_item(seller, name, description, price, private_key)
+    if success:
+        return jsonify({"status": "Item List हो गया!", "message": msg})
+    return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/market/buy/<item_id>/<buyer>/<private_key>')
+@rate_limit
+def buy_item(item_id, buyer, private_key):
+    success, msg = bricks.buy_item(item_id, buyer, private_key)
+    if success:
+        return jsonify({"status": "Item खरीद ली!", "message": msg})
+    return jsonify({"status": "Failed!", "message": msg}), 400
+
+@app.route('/market')
+@rate_limit
+def market():
+    result = []
+    for item in bricks.marketplace:
+        result.append({
+            "id": item.item_id,
+            "name": item.name,
+            "description": item.description,
+            "seller": item.seller,
+            "buyer": item.buyer,
+            "price": item.price,
+            "status": item.status,
+            "time": item.timestamp
+        })
+    return jsonify(result)
 
 @app.route('/nft/create/<creator>/<name>/<description>/<int:price>/<private_key>')
 @rate_limit
