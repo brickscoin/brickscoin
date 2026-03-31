@@ -1,3 +1,10 @@
+import razorpay
+RAZORPAY_KEY_ID = "rzp_test_SXOTXBM5Bx0Vmg"
+RAZORPAY_KEY_SECRET = "HsfD97i640LfqCAIC0nOii4Z"
+razorpay_client = razorpay.Client(
+    auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
+)
+
 from flask_sqlalchemy import SQLAlchemy
 import os
 from flask import Flask, jsonify, render_template, request
@@ -95,6 +102,15 @@ class GameDB(db.Model):
     reward = db.Column(db.Integer)
     timestamp = db.Column(db.String(50))
 
+class PaymentDB(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    payment_id = db.Column(db.String(50), unique=True)
+    wallet_name = db.Column(db.String(50))
+    amount_inr = db.Column(db.Integer)
+    bricks_amount = db.Column(db.Integer)
+    status = db.Column(db.String(20), default="pending")
+    timestamp = db.Column(db.String(50))
+
 # ===== RATE LIMITING =====
 request_counts = {}
 RATE_LIMIT = 30
@@ -117,47 +133,23 @@ def rate_limit(f):
 MESSAGES = {
     "hi": {
         "tx_done": "✅ Transaction हो गई!",
-        "tx_failed": "❌ Transaction Failed!",
         "wrong_key": "❌ Wrong Private Key!",
         "low_balance": "❌ Balance कम है!",
-        "staked": "✅ BRICKS Stake हो गए!",
-        "reward": "✅ Reward मिला!",
-        "loan": "✅ Loan मिला!",
-        "game_play": "🎮 Game खेला!",
-        "vote_cast": "✅ Vote दे दिया!",
     },
     "en": {
         "tx_done": "✅ Transaction Done!",
-        "tx_failed": "❌ Transaction Failed!",
         "wrong_key": "❌ Wrong Private Key!",
         "low_balance": "❌ Low Balance!",
-        "staked": "✅ BRICKS Staked!",
-        "reward": "✅ Reward Received!",
-        "loan": "✅ Loan Granted!",
-        "game_play": "🎮 Game Played!",
-        "vote_cast": "✅ Vote Cast!",
     },
     "zh": {
         "tx_done": "✅ 交易完成!",
-        "tx_failed": "❌ 交易失败!",
         "wrong_key": "❌ 错误的私钥!",
         "low_balance": "❌ 余额不足!",
-        "staked": "✅ 已质押!",
-        "reward": "✅ 已获得奖励!",
-        "loan": "✅ 贷款已批准!",
-        "game_play": "🎮 游戏完成!",
-        "vote_cast": "✅ 投票完成!",
     },
     "ru": {
         "tx_done": "✅ Транзакция выполнена!",
-        "tx_failed": "❌ Ошибка транзакции!",
         "wrong_key": "❌ Неверный ключ!",
         "low_balance": "❌ Недостаточно средств!",
-        "staked": "✅ BRICKS застейканы!",
-        "reward": "✅ Награда получена!",
-        "loan": "✅ Кредит одобрен!",
-        "game_play": "🎮 Игра сыграна!",
-        "vote_cast": "✅ Голос подан!",
     }
 }
 
@@ -240,7 +232,9 @@ class SmartContract:
         self.timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         self.contract_id = hashlib.sha256(
             (creator + receiver + str(amount) + self.timestamp).encode()
-        ).hexdigest()[:10]# ===== BLOCKCHAIN =====
+        ).hexdigest()[:10]
+
+# ===== BLOCKCHAIN =====
 class BricksCoin:
     def __init__(self):
         self.chain = []
@@ -257,6 +251,7 @@ class BricksCoin:
         self.staking_rate = 0.05
         self.bank_reserve = 100000
         self.transaction_fee = 0
+        self.inr_to_bricks_rate = 1
         genesis = Block(0, "BRICKS Genesis Block - Global Currency", "0")
         self.chain.append(genesis)
         self._load_wallets()
@@ -383,7 +378,6 @@ class BricksCoin:
         if self.wallets[sender].balance < amount:
             return False, self.get_msg(sender, "low_balance")
 
-        # ZERO FEES - Global Currency Feature
         self.wallets[sender].balance -= amount
         self.wallets[receiver].balance += amount
         self.wallets[sender].reward_points += 5
@@ -442,7 +436,7 @@ class BricksCoin:
             db.session.add(db_stake)
             db.session.commit()
 
-        return True, f"✅ {amount} BRICKS Stake! रोज़ {int(amount * self.staking_rate)} BRICKS मिलेंगे!"
+        return True, f"✅ {amount} BRICKS Stake! रोज़ {int(amount * self.staking_rate)} BRICKS!"
 
     def claim_stake_reward(self, name, private_key):
         if name not in self.wallets:
@@ -450,7 +444,7 @@ class BricksCoin:
         if self.wallets[name].private_key != private_key:
             return False, self.get_msg(name, "wrong_key")
         if self.wallets[name].staked == 0:
-            return False, "कोई Stake नहीं है!"
+            return False, "कोई Stake नहीं!"
 
         reward = int(self.wallets[name].staked * self.staking_rate)
         self.wallets[name].balance += reward
@@ -832,6 +826,63 @@ class BricksCoin:
                 return True, "✅ Contract Execute!"
         return False, "Contract नहीं मिला!"
 
+    # ===== PAYMENT GATEWAY =====
+    def create_payment_order(self, wallet_name, amount_inr):
+        if wallet_name not in self.wallets:
+            return False, None, "Wallet नहीं मिली!"
+        try:
+            amount_inr = int(amount_inr)
+        except:
+            return False, None, "Amount सही नहीं!"
+        if amount_inr < 10:
+            return False, None, "कम से कम ₹10!"
+
+        bricks_amount = amount_inr * self.inr_to_bricks_rate
+
+        order_data = {
+            "amount": amount_inr * 100,
+            "currency": "INR",
+            "notes": {
+                "wallet": wallet_name,
+                "bricks": bricks_amount
+            }
+        }
+
+        try:
+            order = razorpay_client.order.create(order_data)
+            return True, order, f"✅ Order बना! {bricks_amount} BRICKS मिलेंगे!"
+        except Exception as e:
+            return False, None, f"Payment Error: {str(e)}"
+
+    def verify_payment(self, payment_id, order_id, signature, wallet_name, bricks_amount):
+        try:
+            razorpay_client.utility.verify_payment_signature({
+                "razorpay_payment_id": payment_id,
+                "razorpay_order_id": order_id,
+                "razorpay_signature": signature
+            })
+
+            if wallet_name in self.wallets:
+                self.wallets[wallet_name].balance += int(bricks_amount)
+                self.circulating_supply += int(bricks_amount)
+                self.save_wallet(wallet_name)
+
+                with app.app_context():
+                    db_payment = PaymentDB(
+                        payment_id=payment_id,
+                        wallet_name=wallet_name,
+                        amount_inr=int(bricks_amount),
+                        bricks_amount=int(bricks_amount),
+                        status="success",
+                        timestamp=time.strftime("%Y-%m-%d %H:%M:%S")
+                    )
+                    db.session.add(db_payment)
+                    db.session.commit()
+
+            return True, f"✅ Payment Success! {bricks_amount} BRICKS मिले!"
+        except Exception as e:
+            return False, f"Payment Verify Failed: {str(e)}"
+
     # ===== AI SYSTEM =====
     def ai_predict_price(self):
         history = price_system.price_history
@@ -863,23 +914,21 @@ class BricksCoin:
         if name not in self.wallets:
             return None
         w = self.wallets[name]
-        total_value = w.balance + w.staked
-        advice = ""
         if w.balance > 500:
-            advice = "💡 Stake करो — ज़्यादा कमाओ!"
+            advice = "💡 Stake करो!"
         elif w.staked > 0:
             advice = "💡 Reward Claim करो!"
         elif w.balance < 100:
-            advice = "💡 Game खेलो — Balance बढ़ाओ!"
+            advice = "💡 Game खेलो!"
         else:
-            advice = "💡 NFT या Market में invest करो!"
+            advice = "💡 NFT में invest करो!"
 
         return {
             "wallet": name,
             "balance": w.balance,
             "staked": w.staked,
             "reward_points": w.reward_points,
-            "total_value": total_value,
+            "total_value": w.balance + w.staked,
             "nfts": len(w.nfts),
             "advice": advice,
             "global_rank": f"Top {random.randint(1, 100)}% BRICKS holders!"
@@ -893,7 +942,7 @@ class BricksCoin:
             "total_value_locked": self.circulating_supply,
             "vs_dollar": "BRICKS Zero Fees | Dollar High Fees",
             "vs_bitcoin": "BRICKS Fast | Bitcoin Slow",
-            "advantage": "✅ Multi Language ✅ Zero Fees ✅ Fast ✅ Smart Contracts ✅ NFT ✅ Bank",
+            "advantage": "✅ Multi Language ✅ Zero Fees ✅ Smart Contracts ✅ NFT ✅ Bank ✅ AI ✅ Payment Gateway",
             "prediction": f"📈 {random.randint(100, 1000)}% Growth Expected!",
             "countries_targeting": ["🇮🇳 India", "🇷🇺 Russia", "🇨🇳 China", "🇧🇷 Brazil", "🇿🇦 South Africa"]
         }
@@ -959,13 +1008,14 @@ def api():
         "total_votes": len(bricks.votes),
         "total_loans": len(bricks.loans),
         "bank_reserve": bricks.bank_reserve,
-        "transaction_fee": "0 BRICKS (Zero Fee!)",
+        "transaction_fee": "0 BRICKS",
         "blockchain_valid": bricks.is_valid(),
         "price_usd": round(price_system.current_price, 6),
         "market_cap_usd": price_system.get_market_cap(bricks.circulating_supply),
         "price_history": price_system.price_history,
         "languages": ["Hindi", "English", "Chinese", "Russian"],
-        "status": "🚀 BRICKS Coin is LIVE! Global Currency!"
+        "payment_gateway": "Razorpay ✅",
+        "status": "🚀 BRICKS Coin is LIVE!"
     })
 
 @app.route('/wallets')
@@ -1000,9 +1050,7 @@ def chain():
 @rate_limit
 def send(sender, receiver, amount, private_key):
     success, msg = bricks.send_bricks(sender, receiver, amount, private_key)
-    if success:
-        return jsonify({"status": "✅", "message": msg, "fee": "0 BRICKS"})
-    return jsonify({"status": "❌", "message": msg}), 400
+    return jsonify({"status": "✅" if success else "❌", "message": msg, "fee": "0 BRICKS"})
 
 @app.route('/stake/<name>/<amount>/<private_key>')
 @rate_limit
@@ -1067,6 +1115,33 @@ def repay_loan(loan_id, borrower, private_key):
 @rate_limit
 def loans():
     return jsonify(bricks.loans)
+
+@app.route('/payment/create/<wallet_name>/<amount_inr>')
+@rate_limit
+def create_payment(wallet_name, amount_inr):
+    success, order, msg = bricks.create_payment_order(wallet_name, amount_inr)
+    if success:
+        return jsonify({
+            "status": "✅",
+            "message": msg,
+            "order_id": order["id"],
+            "amount_inr": amount_inr,
+            "key_id": RAZORPAY_KEY_ID
+        })
+    return jsonify({"status": "❌", "message": msg}), 400
+
+@app.route('/payment/verify', methods=['POST'])
+@rate_limit
+def verify_payment():
+    data = request.json
+    success, msg = bricks.verify_payment(
+        data.get("payment_id"),
+        data.get("order_id"),
+        data.get("signature"),
+        data.get("wallet_name"),
+        data.get("bricks_amount")
+    )
+    return jsonify({"status": "✅" if success else "❌", "message": msg})
 
 @app.route('/ai/predict')
 @rate_limit
