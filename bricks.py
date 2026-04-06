@@ -826,7 +826,6 @@ class BricksCoin:
                 return True, "✅ Contract Execute!"
         return False, "Contract नहीं मिला!"
 
-    # ===== PAYMENT GATEWAY =====
     def create_payment_order(self, wallet_name, amount_inr):
         if wallet_name not in self.wallets:
             return False, None, "Wallet नहीं मिली!"
@@ -838,7 +837,6 @@ class BricksCoin:
             return False, None, "कम से कम ₹10!"
 
         bricks_amount = amount_inr * self.inr_to_bricks_rate
-
         order_data = {
             "amount": amount_inr * 100,
             "currency": "INR",
@@ -881,9 +879,8 @@ class BricksCoin:
 
             return True, f"✅ Payment Success! {bricks_amount} BRICKS मिले!"
         except Exception as e:
-            return False, f"Payment Verify Failed: {str(e)}"
+            return False, f"❌ Payment Failed!"
 
-    # ===== AI SYSTEM =====
     def ai_predict_price(self):
         history = price_system.price_history
         if len(history) > 1:
@@ -980,7 +977,7 @@ with app.app_context():
 bricks = BricksCoin()
 price_system = PriceSystem()
 
-# ===== ROUTES =====
+# ===== ROUTES — POST Requests से Secure =====
 @app.route('/')
 @rate_limit
 def home():
@@ -1015,6 +1012,7 @@ def api():
         "price_history": price_system.price_history,
         "languages": ["Hindi", "English", "Chinese", "Russian"],
         "payment_gateway": "Razorpay ✅",
+        "security": "POST Request — Key Hidden ✅",
         "status": "🚀 BRICKS Coin is LIVE!"
     })
 
@@ -1028,7 +1026,6 @@ def wallets():
             "balance": w.balance,
             "staked": w.staked,
             "reward_points": w.reward_points,
-            "private_key": w.private_key,
             "nfts": w.nfts
         }
     return jsonify(result)
@@ -1046,46 +1043,82 @@ def chain():
         })
     return jsonify(blocks)
 
-@app.route('/send/<sender>/<receiver>/<amount>/<private_key>')
+# ===== POST ROUTES — Secure =====
+@app.route('/send', methods=['POST'])
 @rate_limit
-def send(sender, receiver, amount, private_key):
-    success, msg = bricks.send_bricks(sender, receiver, amount, private_key)
+def send():
+    data = request.json
+    success, msg = bricks.send_bricks(
+        data.get("sender"),
+        data.get("receiver"),
+        data.get("amount"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg, "fee": "0 BRICKS"})
 
-@app.route('/stake/<name>/<amount>/<private_key>')
+@app.route('/stake', methods=['POST'])
 @rate_limit
-def stake(name, amount, private_key):
-    success, msg = bricks.stake_bricks(name, amount, private_key)
+def stake():
+    data = request.json
+    success, msg = bricks.stake_bricks(
+        data.get("name"),
+        data.get("amount"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/stake/claim/<name>/<private_key>')
+@app.route('/stake/claim', methods=['POST'])
 @rate_limit
-def claim_stake(name, private_key):
-    success, msg = bricks.claim_stake_reward(name, private_key)
+def claim_stake():
+    data = request.json
+    success, msg = bricks.claim_stake_reward(
+        data.get("name"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/stake/unstake/<name>/<private_key>')
+@app.route('/stake/unstake', methods=['POST'])
 @rate_limit
-def unstake(name, private_key):
-    success, msg = bricks.unstake_bricks(name, private_key)
+def unstake():
+    data = request.json
+    success, msg = bricks.unstake_bricks(
+        data.get("name"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/reward/claim/<name>/<private_key>')
+@app.route('/reward/claim', methods=['POST'])
 @rate_limit
-def claim_reward(name, private_key):
-    success, msg = bricks.claim_reward(name, private_key)
+def claim_reward():
+    data = request.json
+    success, msg = bricks.claim_reward(
+        data.get("name"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/vote/create/<creator>/<title>/<description>/<private_key>')
+@app.route('/vote/create', methods=['POST'])
 @rate_limit
-def create_vote(creator, title, description, private_key):
-    success, msg = bricks.create_vote(creator, title, description, private_key)
+def create_vote():
+    data = request.json
+    success, msg = bricks.create_vote(
+        data.get("creator"),
+        data.get("title"),
+        data.get("description"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/vote/cast/<vote_id>/<voter>/<choice>/<private_key>')
+@app.route('/vote/cast', methods=['POST'])
 @rate_limit
-def cast_vote(vote_id, voter, choice, private_key):
-    success, msg = bricks.cast_vote(vote_id, voter, choice, private_key)
+def cast_vote():
+    data = request.json
+    success, msg = bricks.cast_vote(
+        data.get("vote_id"),
+        data.get("voter"),
+        data.get("choice"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
 @app.route('/votes')
@@ -1093,22 +1126,36 @@ def cast_vote(vote_id, voter, choice, private_key):
 def votes():
     return jsonify(bricks.votes)
 
-@app.route('/game/play/<player>/<private_key>')
+@app.route('/game/play', methods=['POST'])
 @rate_limit
-def play_game(player, private_key):
-    success, msg = bricks.play_game(player, private_key)
+def play_game():
+    data = request.json
+    success, msg = bricks.play_game(
+        data.get("player"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/bank/loan/<borrower>/<amount>/<private_key>')
+@app.route('/bank/loan', methods=['POST'])
 @rate_limit
-def take_loan(borrower, amount, private_key):
-    success, msg = bricks.take_loan(borrower, amount, private_key)
+def take_loan():
+    data = request.json
+    success, msg = bricks.take_loan(
+        data.get("borrower"),
+        data.get("amount"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/bank/repay/<loan_id>/<borrower>/<private_key>')
+@app.route('/bank/repay', methods=['POST'])
 @rate_limit
-def repay_loan(loan_id, borrower, private_key):
-    success, msg = bricks.repay_loan(loan_id, borrower, private_key)
+def repay_loan():
+    data = request.json
+    success, msg = bricks.repay_loan(
+        data.get("loan_id"),
+        data.get("borrower"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
 @app.route('/bank/loans')
@@ -1116,61 +1163,68 @@ def repay_loan(loan_id, borrower, private_key):
 def loans():
     return jsonify(bricks.loans)
 
-@app.route('/payment/create/<wallet_name>/<amount_inr>')
+@app.route('/nft/create', methods=['POST'])
 @rate_limit
-def create_payment(wallet_name, amount_inr):
-    success, order, msg = bricks.create_payment_order(wallet_name, amount_inr)
-    if success:
-        return jsonify({
-            "status": "✅",
-            "message": msg,
-            "order_id": order["id"],
-            "amount_inr": amount_inr,
-            "key_id": RAZORPAY_KEY_ID
-        })
-    return jsonify({"status": "❌", "message": msg}), 400
-
-@app.route('/payment/verify', methods=['POST'])
-@rate_limit
-def verify_payment():
+def create_nft():
     data = request.json
-    success, msg = bricks.verify_payment(
-        data.get("payment_id"),
-        data.get("order_id"),
-        data.get("signature"),
-        data.get("wallet_name"),
-        data.get("bricks_amount")
+    success, msg = bricks.create_nft(
+        data.get("name"),
+        data.get("description"),
+        data.get("creator"),
+        data.get("price"),
+        data.get("private_key")
     )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/ai/predict')
+@app.route('/nft/buy', methods=['POST'])
 @rate_limit
-def ai_predict():
-    return jsonify(bricks.ai_predict_price())
-
-@app.route('/ai/analyze/<name>')
-@rate_limit
-def ai_analyze(name):
-    result = bricks.ai_analyze_wallet(name)
-    if result:
-        return jsonify(result)
-    return jsonify({"error": "Wallet नहीं मिली!"}), 404
-
-@app.route('/ai/global')
-@rate_limit
-def ai_global():
-    return jsonify(bricks.ai_global_analysis())
-
-@app.route('/market/list/<seller>/<name>/<description>/<price>/<private_key>')
-@rate_limit
-def list_item(seller, name, description, price, private_key):
-    success, msg = bricks.list_item(seller, name, description, price, private_key)
+def buy_nft():
+    data = request.json
+    success, msg = bricks.buy_nft(
+        data.get("nft_id"),
+        data.get("buyer"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/market/buy/<item_id>/<buyer>/<private_key>')
+@app.route('/nfts')
 @rate_limit
-def buy_item(item_id, buyer, private_key):
-    success, msg = bricks.buy_item(item_id, buyer, private_key)
+def nfts():
+    result = []
+    for n in bricks.nfts:
+        result.append({
+            "id": n.nft_id,
+            "name": n.name,
+            "description": n.description,
+            "creator": n.creator,
+            "owner": n.owner,
+            "price": n.price,
+            "time": n.timestamp
+        })
+    return jsonify(result)
+
+@app.route('/market/list', methods=['POST'])
+@rate_limit
+def list_item():
+    data = request.json
+    success, msg = bricks.list_item(
+        data.get("seller"),
+        data.get("name"),
+        data.get("description"),
+        data.get("price"),
+        data.get("private_key")
+    )
+    return jsonify({"status": "✅" if success else "❌", "message": msg})
+
+@app.route('/market/buy', methods=['POST'])
+@rate_limit
+def buy_item():
+    data = request.json
+    success, msg = bricks.buy_item(
+        data.get("item_id"),
+        data.get("buyer"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
 @app.route('/market')
@@ -1190,44 +1244,27 @@ def market():
         })
     return jsonify(result)
 
-@app.route('/nft/create/<creator>/<name>/<description>/<int:price>/<private_key>')
+@app.route('/contract/create', methods=['POST'])
 @rate_limit
-def create_nft(creator, name, description, price, private_key):
-    success, msg = bricks.create_nft(name, description, creator, price, private_key)
+def create_contract():
+    data = request.json
+    success, msg = bricks.create_contract(
+        data.get("creator"),
+        data.get("receiver"),
+        data.get("amount"),
+        data.get("condition"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
-@app.route('/nft/buy/<nft_id>/<buyer>/<private_key>')
+@app.route('/contract/execute', methods=['POST'])
 @rate_limit
-def buy_nft(nft_id, buyer, private_key):
-    success, msg = bricks.buy_nft(nft_id, buyer, private_key)
-    return jsonify({"status": "✅" if success else "❌", "message": msg})
-
-@app.route('/nfts')
-@rate_limit
-def nfts():
-    result = []
-    for n in bricks.nfts:
-        result.append({
-            "id": n.nft_id,
-            "name": n.name,
-            "description": n.description,
-            "creator": n.creator,
-            "owner": n.owner,
-            "price": n.price,
-            "time": n.timestamp
-        })
-    return jsonify(result)
-
-@app.route('/contract/create/<creator>/<receiver>/<amount>/<condition>/<private_key>')
-@rate_limit
-def create_contract(creator, receiver, amount, condition, private_key):
-    success, msg = bricks.create_contract(creator, receiver, amount, condition, private_key)
-    return jsonify({"status": "✅" if success else "❌", "message": msg})
-
-@app.route('/contract/execute/<contract_id>/<private_key>')
-@rate_limit
-def execute_contract(contract_id, private_key):
-    success, msg = bricks.execute_contract(contract_id, private_key)
+def execute_contract():
+    data = request.json
+    success, msg = bricks.execute_contract(
+        data.get("contract_id"),
+        data.get("private_key")
+    )
     return jsonify({"status": "✅" if success else "❌", "message": msg})
 
 @app.route('/contracts')
@@ -1246,9 +1283,43 @@ def contracts():
         })
     return jsonify(result)
 
-@app.route('/wallet/create/<name>/<language>')
+@app.route('/payment/create', methods=['POST'])
 @rate_limit
-def create_wallet_api(name, language):
+def create_payment():
+    data = request.json
+    success, order, msg = bricks.create_payment_order(
+        data.get("wallet_name"),
+        data.get("amount_inr")
+    )
+    if success:
+        return jsonify({
+            "status": "✅",
+            "message": msg,
+            "order_id": order["id"],
+            "amount_inr": data.get("amount_inr"),
+            "key_id": RAZORPAY_KEY_ID
+        })
+    return jsonify({"status": "❌", "message": msg}), 400
+
+@app.route('/payment/verify', methods=['POST'])
+@rate_limit
+def verify_payment():
+    data = request.json
+    success, msg = bricks.verify_payment(
+        data.get("payment_id"),
+        data.get("order_id"),
+        data.get("signature"),
+        data.get("wallet_name"),
+        data.get("bricks_amount")
+    )
+    return jsonify({"status": "✅" if success else "❌", "message": msg})
+
+@app.route('/wallet/create', methods=['POST'])
+@rate_limit
+def create_wallet_api():
+    data = request.json
+    name = data.get("name")
+    language = data.get("language", "hi")
     if language not in ["hi", "en", "zh", "ru"]:
         language = "hi"
     w = bricks.create_wallet(name, 100, language)
@@ -1262,6 +1333,24 @@ def create_wallet_api(name, language):
             "language": language
         })
     return jsonify({"status": "❌ Failed!"}), 400
+
+@app.route('/ai/predict')
+@rate_limit
+def ai_predict():
+    return jsonify(bricks.ai_predict_price())
+
+@app.route('/ai/analyze/<name>')
+@rate_limit
+def ai_analyze(name):
+    result = bricks.ai_analyze_wallet(name)
+    if result:
+        return jsonify(result)
+    return jsonify({"error": "Wallet नहीं मिली!"}), 404
+
+@app.route('/ai/global')
+@rate_limit
+def ai_global():
+    return jsonify(bricks.ai_global_analysis())
 
 @app.errorhandler(404)
 def not_found(e):
