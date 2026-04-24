@@ -21,19 +21,18 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bricks.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# ===== NODES =====
 NODES = set([
     "https://brickscoin.onrender.com",
     "https://brickscoin-production.up.railway.app"
 ])
 
-# ===== DATABASE MODELS =====
 class TransactionDB(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender = db.Column(db.String(50))
     receiver = db.Column(db.String(50))
     amount = db.Column(db.Integer)
     timestamp = db.Column(db.String(50))
+    tx_hash = db.Column(db.String(100), unique=True, nullable=True)
 
 class WalletDB(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -129,7 +128,6 @@ class NodeDB(db.Model):
     status = db.Column(db.String(20), default="active")
     timestamp = db.Column(db.String(50))
 
-# ===== RATE LIMITING =====
 request_counts = {}
 RATE_LIMIT = 30
 
@@ -147,7 +145,6 @@ def rate_limit(f):
         return f(*args, **kwargs)
     return decorated
 
-# ===== MULTI LANGUAGE =====
 MESSAGES = {
     "hi": {
         "tx_done": "✅ Transaction हो गई!",
@@ -171,7 +168,6 @@ MESSAGES = {
     }
 }
 
-# ===== WALLET =====
 class Wallet:
     def __init__(self, name):
         self.name = name
@@ -185,7 +181,6 @@ class Wallet:
         ).hexdigest()[:16]
         self.nfts = []
 
-# ===== BLOCK =====
 class Block:
     def __init__(self, index, data, previous_hash):
         self.index = index
@@ -212,7 +207,6 @@ class Block:
                 return hash_val
             self.nonce += 1
 
-# ===== NFT =====
 class NFT:
     def __init__(self, name, description, creator, price):
         self.name = name
@@ -225,7 +219,6 @@ class NFT:
             (name + creator + self.timestamp).encode()
         ).hexdigest()[:10]
 
-# ===== MARKETPLACE ITEM =====
 class MarketItem:
     def __init__(self, name, description, seller, price):
         self.name = name
@@ -239,7 +232,6 @@ class MarketItem:
             (name + seller + self.timestamp).encode()
         ).hexdigest()[:10]
 
-# ===== SMART CONTRACT =====
 class SmartContract:
     def __init__(self, creator, receiver, amount, condition):
         self.creator = creator
@@ -252,7 +244,6 @@ class SmartContract:
             (creator + receiver + str(amount) + self.timestamp).encode()
         ).hexdigest()[:10]
 
-# ===== BLOCKCHAIN =====
 class BricksCoin:
     def __init__(self):
         self.chain = []
@@ -362,6 +353,7 @@ class BricksCoin:
                     "status": n.status,
                     "timestamp": n.timestamp
                 })
+                NODES.add(n.node_url)
 
     def create_wallet(self, name, balance=0, language="hi"):
         if not name or len(name) > 50:
@@ -397,115 +389,34 @@ class BricksCoin:
         lang = self.wallets[name].language if name in self.wallets else "hi"
         return MESSAGES.get(lang, MESSAGES["hi"]).get(key, key)
 
-    def broadcast_wallet(self, name):
-        if name not in self.wallets:
-            return
-        wallet_data = {
-            "name": name,
-            "balance": self.wallets[name].balance,
-            "staked": self.wallets[name].staked,
-            "reward_points": self.wallets[name].reward_points
-        }
-        def send_to_node(node):
+    # ===== BITCOIN STYLE SYNC =====
+    def broadcast_to_all_nodes(self, endpoint, data):
+        def send(node):
             try:
                 requests.post(
-                    f"{node}/sync/wallet",
-                    json=wallet_data,
+                    f"{node}{endpoint}",
+                    json=data,
                     timeout=5
                 )
             except:
                 pass
         for node in NODES:
-            thread = threading.Thread(target=send_to_node, args=(node,))
+            thread = threading.Thread(target=send, args=(node,))
             thread.start()
 
-    def broadcast_transaction(self, tx_data):
-        def send_to_node(node):
-            try:
-                requests.post(
-                    f"{node}/sync/transaction",
-                    json=tx_data,
-                    timeout=5
-                )
-            except:
-                pass
-        for node in NODES:
-            thread = threading.Thread(target=send_to_node, args=(node,))
-            thread.start()
-
-    # ===== NODE MINING REWARD =====
-    def register_node(self, wallet_name, node_url, private_key):
-        if wallet_name not in self.wallets:
-            return False, "Wallet नहीं मिली!"
-        if self.wallets[wallet_name].private_key != private_key:
-            return False, "❌ Wrong Private Key!"
-
-        node_id = hashlib.sha256(
-            (wallet_name + node_url + time.strftime("%Y-%m-%d %H:%M:%S")).encode()
-        ).hexdigest()[:10]
-
-        node = {
-            "node_id": node_id,
-            "wallet_name": wallet_name,
-            "node_url": node_url,
-            "last_reward": "",
-            "total_rewards": 0,
-            "status": "active",
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+    def sync_full_state(self):
+        state = {
+            "wallets": {},
+            "transactions": self.transaction_history[-50:],
+            "chain_length": len(self.chain)
         }
-        self.nodes.append(node)
-        NODES.add(node_url)
-
-        with app.app_context():
-            existing = NodeDB.query.filter_by(wallet_name=wallet_name).first()
-            if not existing:
-                db_node = NodeDB(
-                    node_id=node_id,
-                    wallet_name=wallet_name,
-                    node_url=node_url,
-                    last_reward="",
-                    total_rewards=0,
-                    status="active",
-                    timestamp=node["timestamp"]
-                )
-                db.session.add(db_node)
-                db.session.commit()
-
-        return True, f"✅ Node Register हो गया! ID: {node_id} — रोज़ {self.node_daily_reward} BRICKS मिलेंगे!"
-
-    def claim_node_reward(self, wallet_name, private_key):
-        if wallet_name not in self.wallets:
-            return False, "Wallet नहीं मिली!"
-        if self.wallets[wallet_name].private_key != private_key:
-            return False, "❌ Wrong Private Key!"
-
-        today = time.strftime("%Y-%m-%d")
-        node = None
-        for n in self.nodes:
-            if n["wallet_name"] == wallet_name:
-                node = n
-                break
-
-        if not node:
-            return False, "❌ पहले Node Register करो!"
-        if node["last_reward"] == today:
-            return False, "❌ आज का Reward पहले ले लिया! कल आओ!"
-
-        self.wallets[wallet_name].balance += self.node_daily_reward
-        self.circulating_supply += self.node_daily_reward
-        node["last_reward"] = today
-        node["total_rewards"] += self.node_daily_reward
-
-        with app.app_context():
-            db_node = NodeDB.query.filter_by(wallet_name=wallet_name).first()
-            if db_node:
-                db_node.last_reward = today
-                db_node.total_rewards = node["total_rewards"]
-                db.session.commit()
-
-        self.save_wallet(wallet_name)
-        self.broadcast_wallet(wallet_name)
-        return True, f"✅ {self.node_daily_reward} BRICKS Node Reward मिला! Total: {node['total_rewards']} BRICKS!"
+        for name, w in self.wallets.items():
+            state["wallets"][name] = {
+                "balance": w.balance,
+                "staked": w.staked,
+                "reward_points": w.reward_points
+            }
+        self.broadcast_to_all_nodes("/sync/state", state)
 
     def send_bricks(self, sender, receiver, amount, private_key=""):
         if sender not in self.wallets:
@@ -519,7 +430,7 @@ class BricksCoin:
         except:
             return False, "Amount सही नहीं!"
         if amount <= 0:
-            return False, "Amount 0 से ज़्यादा होना चाहिए!"
+            return False, "Amount 0 से ज़्यादा!"
         if self.wallets[sender].balance < amount:
             return False, self.get_msg(sender, "low_balance")
 
@@ -527,24 +438,32 @@ class BricksCoin:
         self.wallets[receiver].balance += amount
         self.wallets[sender].reward_points += 5
 
+        tx_hash = hashlib.sha256(
+            (sender + receiver + str(amount) + time.strftime("%Y-%m-%d %H:%M:%S")).encode()
+        ).hexdigest()[:20]
+
         tx = {
             "from": sender,
             "to": receiver,
             "amount": amount,
             "fee": 0,
+            "hash": tx_hash,
             "time": time.strftime("%Y-%m-%d %H:%M:%S")
         }
         self.transaction_history.append(tx)
 
         with app.app_context():
-            db_tx = TransactionDB(
-                sender=sender,
-                receiver=receiver,
-                amount=amount,
-                timestamp=tx["time"]
-            )
-            db.session.add(db_tx)
-            db.session.commit()
+            existing = TransactionDB.query.filter_by(tx_hash=tx_hash).first()
+            if not existing:
+                db_tx = TransactionDB(
+                    sender=sender,
+                    receiver=receiver,
+                    amount=amount,
+                    timestamp=tx["time"],
+                    tx_hash=tx_hash
+                )
+                db.session.add(db_tx)
+                db.session.commit()
 
         block = Block(len(self.chain), str(tx), self.chain[-1].hash)
         self.chain.append(block)
@@ -553,9 +472,19 @@ class BricksCoin:
 
         self.save_wallet(sender)
         self.save_wallet(receiver)
-        self.broadcast_transaction(tx)
-        self.broadcast_wallet(sender)
-        self.broadcast_wallet(receiver)
+        self.broadcast_to_all_nodes("/sync/transaction", tx)
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": sender,
+            "balance": self.wallets[sender].balance,
+            "staked": self.wallets[sender].staked,
+            "reward_points": self.wallets[sender].reward_points
+        })
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": receiver,
+            "balance": self.wallets[receiver].balance,
+            "staked": self.wallets[receiver].staked,
+            "reward_points": self.wallets[receiver].reward_points
+        })
         return True, self.get_msg(sender, "tx_done")
 
     def stake_bricks(self, name, amount, private_key):
@@ -573,7 +502,6 @@ class BricksCoin:
         self.wallets[name].balance -= amount
         self.wallets[name].staked += amount
         self.save_wallet(name)
-        self.broadcast_wallet(name)
 
         with app.app_context():
             db_stake = StakeDB(
@@ -585,6 +513,12 @@ class BricksCoin:
             db.session.add(db_stake)
             db.session.commit()
 
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": name,
+            "balance": self.wallets[name].balance,
+            "staked": self.wallets[name].staked,
+            "reward_points": self.wallets[name].reward_points
+        })
         return True, f"✅ {amount} BRICKS Stake! रोज़ {int(amount * self.staking_rate)} BRICKS!"
 
     def claim_stake_reward(self, name, private_key):
@@ -600,7 +534,12 @@ class BricksCoin:
         self.wallets[name].reward_points += 10
         self.circulating_supply += reward
         self.save_wallet(name)
-        self.broadcast_wallet(name)
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": name,
+            "balance": self.wallets[name].balance,
+            "staked": self.wallets[name].staked,
+            "reward_points": self.wallets[name].reward_points
+        })
         return True, f"✅ {reward} BRICKS Reward मिला!"
 
     def unstake_bricks(self, name, private_key):
@@ -615,7 +554,12 @@ class BricksCoin:
         self.wallets[name].balance += amount
         self.wallets[name].staked = 0
         self.save_wallet(name)
-        self.broadcast_wallet(name)
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": name,
+            "balance": self.wallets[name].balance,
+            "staked": self.wallets[name].staked,
+            "reward_points": self.wallets[name].reward_points
+        })
         return True, f"✅ {amount} BRICKS Unstake!"
 
     def claim_reward(self, name, private_key):
@@ -631,7 +575,12 @@ class BricksCoin:
         self.wallets[name].reward_points = 0
         self.circulating_supply += bricks_reward
         self.save_wallet(name)
-        self.broadcast_wallet(name)
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": name,
+            "balance": self.wallets[name].balance,
+            "staked": self.wallets[name].staked,
+            "reward_points": self.wallets[name].reward_points
+        })
         return True, f"✅ {bricks_reward} BRICKS Reward!"
 
     def create_vote(self, creator, title, description, private_key):
@@ -711,7 +660,6 @@ class BricksCoin:
         self.wallets[player].reward_points += score
         self.circulating_supply += reward
         self.save_wallet(player)
-        self.broadcast_wallet(player)
 
         with app.app_context():
             db_game = GameDB(
@@ -724,6 +672,12 @@ class BricksCoin:
             db.session.add(db_game)
             db.session.commit()
 
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": player,
+            "balance": self.wallets[player].balance,
+            "staked": self.wallets[player].staked,
+            "reward_points": self.wallets[player].reward_points
+        })
         return True, f"🎮 Score:{score} Reward:{reward} BRICKS!"
 
     def take_loan(self, borrower, amount, private_key):
@@ -773,7 +727,12 @@ class BricksCoin:
             db.session.commit()
 
         self.save_wallet(borrower)
-        self.broadcast_wallet(borrower)
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": borrower,
+            "balance": self.wallets[borrower].balance,
+            "staked": self.wallets[borrower].staked,
+            "reward_points": self.wallets[borrower].reward_points
+        })
         return True, f"✅ {amount} BRICKS Loan! 10% Interest 30 दिन!"
 
     def repay_loan(self, loan_id, borrower, private_key):
@@ -802,7 +761,12 @@ class BricksCoin:
                         db.session.commit()
 
                 self.save_wallet(borrower)
-                self.broadcast_wallet(borrower)
+                self.broadcast_to_all_nodes("/sync/wallet", {
+                    "name": borrower,
+                    "balance": self.wallets[borrower].balance,
+                    "staked": self.wallets[borrower].staked,
+                    "reward_points": self.wallets[borrower].reward_points
+                })
                 return True, f"✅ Loan चुका दिया! {repay} BRICKS!"
         return False, "Loan नहीं मिला!"
 
@@ -861,8 +825,6 @@ class BricksCoin:
 
                 self.save_wallet(buyer)
                 self.save_wallet(old_owner)
-                self.broadcast_wallet(buyer)
-                self.broadcast_wallet(old_owner)
                 return True, f"✅ NFT खरीदी!"
         return False, "NFT नहीं मिली!"
 
@@ -923,8 +885,6 @@ class BricksCoin:
 
                 self.save_wallet(buyer)
                 self.save_wallet(i.seller)
-                self.broadcast_wallet(buyer)
-                self.broadcast_wallet(i.seller)
                 return True, f"✅ खरीद ली!"
         return False, "Item नहीं मिली!"
 
@@ -946,7 +906,6 @@ class BricksCoin:
         self.contracts.append(contract)
         self.wallets[creator].balance -= amount
         self.save_wallet(creator)
-        self.broadcast_wallet(creator)
 
         with app.app_context():
             db_contract = SmartContractDB(
@@ -972,7 +931,6 @@ class BricksCoin:
 
                 self.wallets[contract.receiver].balance += contract.amount
                 self.save_wallet(contract.receiver)
-                self.broadcast_wallet(contract.receiver)
                 contract.status = "executed"
 
                 with app.app_context():
@@ -986,6 +944,84 @@ class BricksCoin:
 
                 return True, "✅ Contract Execute!"
         return False, "Contract नहीं मिला!"
+
+    def register_node(self, wallet_name, node_url, private_key):
+        if wallet_name not in self.wallets:
+            return False, "Wallet नहीं मिली!"
+        if self.wallets[wallet_name].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
+
+        node_id = hashlib.sha256(
+            (wallet_name + node_url + time.strftime("%Y-%m-%d %H:%M:%S")).encode()
+        ).hexdigest()[:10]
+
+        node = {
+            "node_id": node_id,
+            "wallet_name": wallet_name,
+            "node_url": node_url,
+            "last_reward": "",
+            "total_rewards": 0,
+            "status": "active",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        self.nodes.append(node)
+        NODES.add(node_url)
+
+        with app.app_context():
+            existing = NodeDB.query.filter_by(wallet_name=wallet_name).first()
+            if not existing:
+                db_node = NodeDB(
+                    node_id=node_id,
+                    wallet_name=wallet_name,
+                    node_url=node_url,
+                    last_reward="",
+                    total_rewards=0,
+                    status="active",
+                    timestamp=node["timestamp"]
+                )
+                db.session.add(db_node)
+                db.session.commit()
+
+        return True, f"✅ Node Register! ID:{node_id} रोज़ {self.node_daily_reward} BRICKS!"
+
+    def claim_node_reward(self, wallet_name, private_key):
+        if wallet_name not in self.wallets:
+            return False, "Wallet नहीं मिली!"
+        if self.wallets[wallet_name].private_key != private_key:
+            return False, "❌ Wrong Private Key!"
+
+        today = time.strftime("%Y-%m-%d")
+        node = None
+        for n in self.nodes:
+            if n["wallet_name"] == wallet_name:
+                node = n
+                break
+
+        if not node:
+            return False, "❌ पहले Node Register करो!"
+        if node["last_reward"] == today:
+            return False, "❌ आज का Reward पहले ले लिया!"
+
+        self.wallets[wallet_name].balance += self.node_daily_reward
+        self.circulating_supply += self.node_daily_reward
+        node["last_reward"] = today
+        node["total_rewards"] += self.node_daily_reward
+
+        with app.app_context():
+            db_node = NodeDB.query.filter_by(wallet_name=wallet_name).first()
+            if db_node:
+                db_node.last_reward = today
+                db_node.total_rewards = node["total_rewards"]
+                db.session.commit()
+
+        self.save_wallet(wallet_name)
+        self.broadcast_to_all_nodes("/sync/wallet", {
+            "name": wallet_name,
+            "balance": self.wallets[wallet_name].balance,
+            "staked": self.wallets[wallet_name].staked,
+            "reward_points": self.wallets[wallet_name].reward_points
+        })
+        return True, f"✅ {self.node_daily_reward} BRICKS Node Reward! Total:{node['total_rewards']} BRICKS!"
 
     def create_payment_order(self, wallet_name, amount_inr):
         if wallet_name not in self.wallets:
@@ -1001,10 +1037,7 @@ class BricksCoin:
         order_data = {
             "amount": amount_inr * 100,
             "currency": "INR",
-            "notes": {
-                "wallet": wallet_name,
-                "bricks": bricks_amount
-            }
+            "notes": {"wallet": wallet_name, "bricks": bricks_amount}
         }
 
         try:
@@ -1020,12 +1053,10 @@ class BricksCoin:
                 "razorpay_order_id": order_id,
                 "razorpay_signature": signature
             })
-
             if wallet_name in self.wallets:
                 self.wallets[wallet_name].balance += int(bricks_amount)
                 self.circulating_supply += int(bricks_amount)
                 self.save_wallet(wallet_name)
-                self.broadcast_wallet(wallet_name)
 
                 with app.app_context():
                     db_payment = PaymentDB(
@@ -1041,7 +1072,7 @@ class BricksCoin:
 
             return True, f"✅ Payment Success! {bricks_amount} BRICKS मिले!"
         except:
-            return False, f"❌ Payment Failed!"
+            return False, "❌ Payment Failed!"
 
     def ai_predict_price(self):
         history = price_system.price_history
@@ -1101,8 +1132,8 @@ class BricksCoin:
             "total_nodes": len(self.nodes),
             "total_value_locked": self.circulating_supply,
             "vs_dollar": "BRICKS Zero Fees | Dollar High Fees",
-            "vs_bitcoin": "BRICKS Fast | Bitcoin Slow",
-            "advantage": "✅ Multi Language ✅ Zero Fees ✅ Smart Contracts ✅ NFT ✅ Bank ✅ AI ✅ Payment Gateway ✅ Node Rewards",
+            "vs_bitcoin": "BRICKS Fast + More Features | Bitcoin Slow",
+            "advantage": "✅ Multi Language ✅ Zero Fees ✅ NFT ✅ Bank ✅ AI ✅ Payment Gateway ✅ Node Rewards ✅ Bitcoin Style Sync",
             "prediction": f"📈 {random.randint(100, 1000)}% Growth Expected!",
             "countries_targeting": ["🇮🇳 India", "🇷🇺 Russia", "🇨🇳 China", "🇧🇷 Brazil", "🇿🇦 South Africa"],
             "active_nodes": list(NODES)
@@ -1114,7 +1145,6 @@ class BricksCoin:
                 return False
         return True
 
-# ===== PRICE SYSTEM =====
 class PriceSystem:
     def __init__(self):
         self.current_price = 0.001
@@ -1141,7 +1171,6 @@ with app.app_context():
 bricks = BricksCoin()
 price_system = PriceSystem()
 
-# ===== ROUTES =====
 @app.route('/')
 @rate_limit
 def home():
@@ -1179,7 +1208,7 @@ def api():
         "languages": ["Hindi", "English", "Chinese", "Russian"],
         "payment_gateway": "Razorpay ✅",
         "security": "POST Request — Key Hidden ✅",
-        "sync_network": "Active ✅",
+        "sync": "Bitcoin Style Sync ✅",
         "status": "🚀 BRICKS Coin is LIVE!"
     })
 
@@ -1225,7 +1254,22 @@ def nodes():
 def sync_transaction():
     data = request.json
     if data:
-        bricks.transaction_history.append(data)
+        tx_hash = data.get("hash")
+        exists = any(t.get("hash") == tx_hash for t in bricks.transaction_history)
+        if not exists:
+            bricks.transaction_history.append(data)
+            with app.app_context():
+                db_exists = TransactionDB.query.filter_by(tx_hash=tx_hash).first()
+                if not db_exists:
+                    db_tx = TransactionDB(
+                        sender=data.get("from"),
+                        receiver=data.get("to"),
+                        amount=data.get("amount"),
+                        timestamp=data.get("time"),
+                        tx_hash=tx_hash
+                    )
+                    db.session.add(db_tx)
+                    db.session.commit()
     return jsonify({"status": "✅ Synced!"})
 
 @app.route('/sync/wallet', methods=['POST'])
@@ -1238,6 +1282,19 @@ def sync_wallet():
         bricks.wallets[name].reward_points = data.get("reward_points", bricks.wallets[name].reward_points)
         bricks.save_wallet(name)
     return jsonify({"status": "✅ Wallet Synced!"})
+
+@app.route('/sync/state', methods=['POST'])
+def sync_state():
+    data = request.json
+    if data:
+        wallets_data = data.get("wallets", {})
+        for name, w_data in wallets_data.items():
+            if name in bricks.wallets:
+                bricks.wallets[name].balance = w_data.get("balance", bricks.wallets[name].balance)
+                bricks.wallets[name].staked = w_data.get("staked", bricks.wallets[name].staked)
+                bricks.wallets[name].reward_points = w_data.get("reward_points", bricks.wallets[name].reward_points)
+                bricks.save_wallet(name)
+    return jsonify({"status": "✅ State Synced!"})
 
 @app.route('/node/register', methods=['POST'])
 @rate_limit
