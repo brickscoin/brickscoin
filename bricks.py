@@ -244,6 +244,33 @@ class SmartContract:
             (creator + receiver + str(amount) + self.timestamp).encode()
         ).hexdigest()[:10]
 
+# ===== AUTO NODE DISCOVERY =====
+def auto_discover_nodes():
+    while True:
+        try:
+            for node in list(NODES):
+                try:
+                    response = requests.get(
+                        f"{node}/nodes",
+                        timeout=5
+                    )
+                    data = response.json()
+                    new_nodes = data.get("network_nodes", [])
+                    for new_node in new_nodes:
+                        if new_node not in NODES and new_node:
+                            NODES.add(new_node)
+                except:
+                    pass
+        except:
+            pass
+        time.sleep(300)
+
+discovery_thread = threading.Thread(
+    target=auto_discover_nodes,
+    daemon=True
+)
+discovery_thread.start()
+
 class BricksCoin:
     def __init__(self):
         self.chain = []
@@ -389,7 +416,6 @@ class BricksCoin:
         lang = self.wallets[name].language if name in self.wallets else "hi"
         return MESSAGES.get(lang, MESSAGES["hi"]).get(key, key)
 
-    # ===== BITCOIN STYLE SYNC =====
     def broadcast_to_all_nodes(self, endpoint, data):
         def send(node):
             try:
@@ -655,7 +681,6 @@ class BricksCoin:
 
         score = random.randint(1, 100)
         reward = score // 10
-
         self.wallets[player].balance += reward
         self.wallets[player].reward_points += score
         self.circulating_supply += reward
@@ -982,6 +1007,7 @@ class BricksCoin:
                 db.session.add(db_node)
                 db.session.commit()
 
+        self.sync_full_state()
         return True, f"✅ Node Register! ID:{node_id} रोज़ {self.node_daily_reward} BRICKS!"
 
     def claim_node_reward(self, wallet_name, private_key):
@@ -1133,7 +1159,7 @@ class BricksCoin:
             "total_value_locked": self.circulating_supply,
             "vs_dollar": "BRICKS Zero Fees | Dollar High Fees",
             "vs_bitcoin": "BRICKS Fast + More Features | Bitcoin Slow",
-            "advantage": "✅ Multi Language ✅ Zero Fees ✅ NFT ✅ Bank ✅ AI ✅ Payment Gateway ✅ Node Rewards ✅ Bitcoin Style Sync",
+            "advantage": "✅ Multi Language ✅ Zero Fees ✅ NFT ✅ Bank ✅ AI ✅ Payment Gateway ✅ Node Rewards ✅ Auto Discovery ✅ Bitcoin Style Sync",
             "prediction": f"📈 {random.randint(100, 1000)}% Growth Expected!",
             "countries_targeting": ["🇮🇳 India", "🇷🇺 Russia", "🇨🇳 China", "🇧🇷 Brazil", "🇿🇦 South Africa"],
             "active_nodes": list(NODES)
@@ -1208,8 +1234,8 @@ def api():
         "languages": ["Hindi", "English", "Chinese", "Russian"],
         "payment_gateway": "Razorpay ✅",
         "security": "POST Request — Key Hidden ✅",
-        "sync": "Bitcoin Style Sync ✅",
-        "status": "🚀 BRICKS Coin is LIVE!"
+        "sync": "Bitcoin Style + Auto Discovery ✅",
+        "status": "🚀 BRICKS Coin is LIVE! BTC को Beat करेगी!"
     })
 
 @app.route('/wallets')
@@ -1247,6 +1273,7 @@ def nodes():
         "node_daily_reward": f"{bricks.node_daily_reward} BRICKS",
         "nodes": bricks.nodes,
         "network_nodes": list(NODES),
+        "auto_discovery": "Active ✅",
         "status": "🌐 BRICKS Network Active!"
     })
 
@@ -1323,7 +1350,7 @@ def add_node():
     node = data.get("node")
     if node:
         NODES.add(node)
-        return jsonify({"status": "✅ Node add हो गया!", "nodes": list(NODES)})
+        return jsonify({"status": "✅ Node add!", "nodes": list(NODES)})
     return jsonify({"status": "❌ Failed!"}), 400
 
 @app.route('/send', methods=['POST'])
